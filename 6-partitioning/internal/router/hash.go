@@ -12,6 +12,13 @@ import (
 
 // HashRouter dispatches queries to multiple shards and merges results.
 // Shard selection rule: shard = user_id % 3
+//
+// Limitations of modulo-based sharding:
+// - Rebalancing: when shard count changes, N changes => most keys remap; requires large data moves.
+// - No indirection: routing is tightly coupled to N; no shard-map to remap subsets.
+// - Hotspots: no virtual buckets to smooth key skew; hot users can overload a shard.
+// - Migrations: no double-read/write path; rolling migrations are hard without downtime.
+// - Resilience: no notion of replicas/failover in routing.
 type HashRouter struct {
 	Shards []*pgxpool.Pool
 }

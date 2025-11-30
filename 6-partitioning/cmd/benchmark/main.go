@@ -74,6 +74,26 @@ func main() {
 			_, err := r.GetFeed(ctx, userIDs, limit)
 			return err
 		}
+	case "hash-consistent":
+		// Consistent hashing router to minimize key movement on shard changes.
+		pools, err := db.NewShardPools(ctx)
+		if err != nil {
+			log.Fatalf("connect shards: %v", err)
+		}
+		for _, p := range pools {
+			defer p.Close()
+		}
+		ring := router.NewRing(200)
+		ids := make([]int, 0, len(pools))
+		for i := range pools {
+			ids = append(ids, i)
+		}
+		ring.Build(ids)
+		r := &router.ConsistentHashRouter{Shards: pools, Ring: ring}
+		getFeed = func(ctx context.Context, userIDs []int64, limit int) error {
+			_, err := r.GetFeed(ctx, userIDs, limit)
+			return err
+		}
 	default:
 		log.Fatalf("unknown mode: %s", mode)
 	}

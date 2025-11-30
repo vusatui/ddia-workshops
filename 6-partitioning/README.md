@@ -116,9 +116,7 @@ docker exec -it app go run ./cmd/benchmark -mode=hash -concurrency=50 -requests=
 
 Router fans out to shards based on user IDs, merges results, and sorts globally by `created_at DESC`.
 
----
-
-### 10) Compare results
+### 10) Compare results (baseline/range/hash)
 
 Fill in after your runs:
 
@@ -129,5 +127,59 @@ Fill in after your runs:
 | Hash     | X           | X   | X   |
 
 You should observe improved performance from baseline -> range -> hash.
+
+---
+
+## Consistent hashing: implementation and migration demo
+
+Modulo-based sharding (user_id % N) has a major limitation: when N changes (adding/removing shards), most keys move. Consistent hashing minimizes key movement.
+
+### The idea behind the *Ring*
+
+Consistent hashing maps a huge keyspace onto a circular “ring” of points. Each physical shard is represented by many virtual points (replicas) on that ring. To pick a shard for a key:
+- Hash the key to a 64‑bit number.
+- Find the first ring point clockwise whose hash is ≥ key’s hash (binary search).
+- The owner of that point is the shard that serves the key.
+
+Why this helps:
+- When you add/remove a shard, only the keys that “fall between” the shard’s new/removed points move. The rest keep their owners. That’s why only a fraction of keys migrate, roughly 1/(old_shards+1) when adding a shard.
+- Virtual nodes make the distribution smoother: more replicas per shard → better balance and less variance.
+
+How our code works:
+- `Ring.Build(shards)` creates `replicas` virtual points per shard; each point has a 64‑bit position computed from `(shardIndex, replicaIndex)` with a mixing function for uniform spread, then the points are sorted.
+- `Ring.Owner(keyHash)` does a `sort.Search` to find the first point ≥ `keyHash`, with wrap‑around to the first point if needed.
+- `HashUser(userID)` converts the `int64` to bytes and hashes it (FNV‑1a) to get a stable 64‑bit key for the ring.
+
+
+### Demo: how many keys move when adding a shard (3 → 4):
+
+```bash
+docker exec -it app go run ./cmd/demo_consistent
+```
+
+This section is isolated from the modulo-based example. It uses its own table `posts_hash_ch` to avoid interference.
+
+What it demonstrates:
+- Consistent hashing router and “ring” with virtual nodes
+- Seeding across 3 shards using ring(3)
+- Adding a shard (using the baseline DB as shard #3)
+- Migrating only the moved users’ rows
+- Re-running the read benchmark and comparing stats
+
+Run the demo end-to-end:
+
+```bash
+# The demo seeds data into shards 1..3, then adds shard #4 (baseline),
+# migrates the moved users and runs before/after benchmarks.
+docker exec -it app go run ./cmd/demo_consistent \
+  -users=2000 -posts-per-user=3 -batch=500 \
+  -requests=300 -concurrency=20 -limit=50
+```
+
+Notes:
+- Tables used: `posts_hash_ch` on shards 1..3 and the baseline DB (as shard #4).
+- Router used: `ConsistentHashRouter` with the table set to `posts_hash_ch`.
+- You can adjust flags for larger runs; defaults are chosen to finish quickly.
+
 
 
