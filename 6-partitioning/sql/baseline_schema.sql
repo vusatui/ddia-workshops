@@ -1,0 +1,8 @@
+CREATE TABLE IF NOT EXISTS posts (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  created_at TIMESTAMP NOT NULL,
+  content TEXT NOT NULL
+);
+
+

@@ -1,0 +1,75 @@
+version: "3.9"
+
+services:
+  postgres_baseline:
+    image: postgres:16
+    container_name: postgres_baseline
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  postgres_shard_1:
+    image: postgres:16
+    container_name: postgres_shard_1
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  postgres_shard_2:
+    image: postgres:16
+    container_name: postgres_shard_2
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  postgres_shard_3:
+    image: postgres:16
+    container_name: postgres_shard_3
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: app
+    working_dir: /app
+    command: ["sleep", "infinity"]
+    volumes:
+      - ./:/app
+    depends_on:
+      postgres_baseline:
+        condition: service_healthy
+      postgres_shard_1:
+        condition: service_healthy
+      postgres_shard_2:
+        condition: service_healthy
+      postgres_shard_3:
+        condition: service_healthy
+
+
