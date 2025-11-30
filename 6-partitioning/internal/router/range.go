@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"partitioning/ready/internal/model"
 
@@ -22,14 +23,16 @@ func (r *RangeRouter) GetFeed(ctx context.Context, userIDs []int64, limit int) (
 		return nil, fmt.Errorf("db is nil")
 	}
 	// Using partitioned table (in ready we name it posts_range to avoid clashing with baseline)
+	// Always apply a 7-day window for clear partition pruning.
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
 	const q = `
 	SELECT id, user_id, created_at, content
 	FROM posts_range
-	WHERE user_id = ANY($1)
+	WHERE user_id = ANY($1) AND created_at >= $2
 	ORDER BY created_at DESC
-	LIMIT $2;
+	LIMIT $3;
 	`
-	rows, err := r.DB.Query(ctx, q, userIDs, limit)
+	rows, err := r.DB.Query(ctx, q, userIDs, cutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query range: %w", err)
 	}

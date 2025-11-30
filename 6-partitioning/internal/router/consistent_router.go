@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"partitioning/ready/internal/model"
 
@@ -36,13 +37,27 @@ func (r *ConsistentHashRouter) GetFeed(ctx context.Context, userIDs []int64, lim
 	if table == "" {
 		table = "posts_hash"
 	}
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
 	q := fmt.Sprintf(`
 	SELECT id, user_id, created_at, content
 	FROM %s
-	WHERE user_id = ANY($1)
+WHERE user_id = ANY($1) AND created_at >= $2
 	ORDER BY created_at DESC
-	LIMIT $2;`, table)
+LIMIT $3;`, table)
 	results := make(chan shardResult, len(r.Shards))
+
+	// Distribute global LIMIT across active shards.
+	active := 0
+	for _, ids := range perShard {
+		if len(ids) > 0 {
+			active++
+		}
+	}
+	perLimit := limit
+	if active > 1 {
+		perLimit = (limit + active - 1) / active
+	}
+
 	for idx, ids := range perShard {
 		if len(ids) == 0 {
 			results <- shardResult{}
@@ -50,7 +65,7 @@ func (r *ConsistentHashRouter) GetFeed(ctx context.Context, userIDs []int64, lim
 		}
 		pool := r.Shards[idx]
 		go func(ids []int64, pool *pgxpool.Pool) {
-			rows, err := pool.Query(ctx, q, ids, limit)
+			rows, err := pool.Query(ctx, q, ids, cutoff, perLimit)
 			if err != nil {
 				results <- shardResult{err: err}
 				return

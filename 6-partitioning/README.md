@@ -32,6 +32,8 @@ Wait until all services are healthy.
 
 ```bash
 docker exec -i postgres_baseline psql -U postgres -d postgres < sql/baseline_schema.sql
+docker exec -i postgres_baseline psql -U postgres -d postgres < sql/baseline_indexes.sql
+docker exec -it postgres_baseline psql -U postgres -d postgres -c "ANALYZE posts;"
 ```
 
 This creates table `posts` (no partitioning).
@@ -53,7 +55,8 @@ You can tweak parameters as needed (e.g., fewer posts for quick runs).
 ### 4) Benchmark baseline
 
 ```bash
-docker exec -it app go run ./cmd/benchmark -mode=baseline -concurrency=50 -requests=1000
+docker exec -it app go run ./cmd/benchmark -mode=baseline \
+  -concurrency=100 -requests=3000 -subs=100 -windowDays=7
 ```
 
 Outputs: average latency, p95 latency, and total QPS.
@@ -74,14 +77,20 @@ After applying, copy baseline data into partitioned table:
 docker exec -it postgres_baseline psql -U postgres -d postgres -c "INSERT INTO posts_range (id, user_id, created_at, content) SELECT id, user_id, created_at, content FROM posts;"
 ```
 
-Optionally, add indexes on partitions if desired (not strictly necessary for this workshop).
+Apply per-partition indexes and analyze:
+
+```bash
+docker exec -i postgres_baseline psql -U postgres -d postgres < sql/range_indexes.sql
+docker exec -it postgres_baseline psql -U postgres -d postgres -c "ANALYZE posts_range;"
+```
 
 ---
 
 ### 6) Benchmark range
 
 ```bash
-docker exec -it app go run ./cmd/benchmark -mode=range -concurrency=50 -requests=1000
+docker exec -it app go run ./cmd/benchmark -mode=range \
+  -concurrency=100 -requests=3000 -subs=100 -windowDays=7
 ```
 
 This uses the routing that targets `posts_range` (partitioned by month).
@@ -94,6 +103,12 @@ This uses the routing that targets `posts_range` (partitioned by month).
 docker exec -i postgres_shard_1 psql -U postgres -d postgres < sql/hash_schema.sql
 docker exec -i postgres_shard_2 psql -U postgres -d postgres < sql/hash_schema.sql
 docker exec -i postgres_shard_3 psql -U postgres -d postgres < sql/hash_schema.sql
+docker exec -i postgres_shard_1 psql -U postgres -d postgres < sql/hash_indexes.sql
+docker exec -i postgres_shard_2 psql -U postgres -d postgres < sql/hash_indexes.sql
+docker exec -i postgres_shard_3 psql -U postgres -d postgres < sql/hash_indexes.sql
+docker exec -it postgres_shard_1 psql -U postgres -d postgres -c "ANALYZE posts_hash;"
+docker exec -it postgres_shard_2 psql -U postgres -d postgres -c "ANALYZE posts_hash;"
+docker exec -it postgres_shard_3 psql -U postgres -d postgres -c "ANALYZE posts_hash;"
 ```
 
 ---
@@ -111,7 +126,8 @@ Data is routed to shards using: `shard = user_id % 3`.
 ### 9) Benchmark hash (sharded)
 
 ```bash
-docker exec -it app go run ./cmd/benchmark -mode=hash -concurrency=50 -requests=1000
+docker exec -it app go run ./cmd/benchmark -mode=hash \
+  -concurrency=100 -requests=3000 -subs=100 -windowDays=7
 ```
 
 Router fans out to shards based on user IDs, merges results, and sorts globally by `created_at DESC`.
@@ -180,6 +196,21 @@ Notes:
 - Tables used: `posts_hash_ch` on shards 1..3 and the baseline DB (as shard #4).
 - Router used: `ConsistentHashRouter` with the table set to `posts_hash_ch`.
 - You can adjust flags for larger runs; defaults are chosen to finish quickly.
+
+---
+
+## Clean-up
+
+```bash
+# stop and remove containers
+docker-compose down
+
+# remove volumes to free disk (will delete data!)
+docker-compose down -v
+
+# optional: remove dangling images and build cache
+docker system prune -f
+```
 
 
 

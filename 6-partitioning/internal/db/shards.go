@@ -18,7 +18,12 @@ func NewShardPools(ctx context.Context) ([]*pgxpool.Pool, error) {
 	pools := make([]*pgxpool.Pool, 0, len(hosts))
 	for _, h := range hosts {
 		dsn := fmt.Sprintf("postgres://postgres:postgres@%s:5432/postgres?sslmode=disable", h)
-		pool, err := pgxpool.New(ctx, dsn)
+		cfg, err := pgxpool.ParseConfig(dsn)
+		if err != nil {
+			return nil, fmt.Errorf("parse shard %s dsn: %w", h, err)
+		}
+		cfg.MaxConns = 50
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("connect shard %s: %w", h, err)
 		}

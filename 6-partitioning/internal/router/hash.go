@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"partitioning/ready/internal/model"
 
@@ -50,13 +51,25 @@ func (r *HashRouter) GetFeed(ctx context.Context, userIDs []int64, limit int) ([
 	}
 	results := make(chan shardResult, 3)
 
-	const q = `
-	SELECT id, user_id, created_at, content
-	FROM posts_hash
-	WHERE user_id = ANY($1)
-	ORDER BY created_at DESC
-	LIMIT $2;
-	`
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	q := `
+ 	SELECT id, user_id, created_at, content
+ 	FROM posts_hash
+ 	WHERE user_id = ANY($1) AND created_at >= $2
+ 	ORDER BY created_at DESC
+ 	LIMIT $3;`
+
+	// Distribute the global LIMIT across active shards to reduce over-fetching.
+	active := 0
+	for _, ids := range perShard {
+		if len(ids) > 0 {
+			active++
+		}
+	}
+	perLimit := limit
+	if active > 1 {
+		perLimit = (limit + active - 1) / active // ceil(limit/active)
+	}
 
 	// Fan out to shards concurrently
 	for shardIdx, ids := range perShard {
@@ -67,7 +80,7 @@ func (r *HashRouter) GetFeed(ctx context.Context, userIDs []int64, limit int) ([
 		}
 		pool := r.Shards[shardIdx]
 		go func(ids []int64, pool *pgxpool.Pool) {
-			rows, err := pool.Query(ctx, q, ids, limit)
+			rows, err := pool.Query(ctx, q, ids, cutoff, perLimit)
 			if err != nil {
 				results <- shardResult{err: fmt.Errorf("shard query: %w", err)}
 				return

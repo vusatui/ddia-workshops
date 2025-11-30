@@ -12,7 +12,12 @@ import (
 func NewRangePool(ctx context.Context) (*pgxpool.Pool, error) {
 	// Range partitions live in the baseline Postgres instance
 	dsn := "postgres://postgres:postgres@postgres_baseline:5432/postgres?sslmode=disable"
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse range dsn: %w", err)
+	}
+	cfg.MaxConns = 50
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect range: %w", err)
 	}

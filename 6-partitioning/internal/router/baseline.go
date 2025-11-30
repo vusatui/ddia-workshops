@@ -4,6 +4,7 @@ package router
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"partitioning/ready/internal/model"
 
@@ -21,14 +22,16 @@ func (r *BaselineRouter) GetFeed(ctx context.Context, userIDs []int64, limit int
 	if r.DB == nil {
 		return nil, fmt.Errorf("db is nil")
 	}
+	// Always apply a 7-day time window to highlight partitioning impact consistently.
+	cutoff := time.Now().Add(-7 * 24 * time.Hour)
 	const q = `
 	SELECT id, user_id, created_at, content
 	FROM posts
-	WHERE user_id = ANY($1)
+	WHERE user_id = ANY($1) AND created_at >= $2
 	ORDER BY created_at DESC
-	LIMIT $2;
+	LIMIT $3;
 	`
-	rows, err := r.DB.Query(ctx, q, userIDs, limit)
+	rows, err := r.DB.Query(ctx, q, userIDs, cutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query baseline: %w", err)
 	}

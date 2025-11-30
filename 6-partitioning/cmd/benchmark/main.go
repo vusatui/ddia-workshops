@@ -23,14 +23,22 @@ func main() {
 	var requests int
 	var limit int
 	var users int
-	flag.StringVar(&mode, "mode", "baseline", "benchmark mode: baseline | range | hash")
+	var windowDays int
+	var subs int
+	flag.StringVar(&mode, "mode", "baseline", "benchmark mode: baseline | range | hash | hash-consistent")
 	flag.IntVar(&concurrency, "concurrency", 50, "number of concurrent workers")
 	flag.IntVar(&requests, "requests", 1000, "total number of requests")
 	flag.IntVar(&limit, "limit", 50, "feed limit")
 	flag.IntVar(&users, "users", 10000, "user id space (1..users)")
+	flag.IntVar(&windowDays, "windowDays", 0, "time window in days for created_at cutoff (0 = no cutoff)")
+	flag.IntVar(&subs, "subs", 10, "number of user_ids per request")
 	flag.Parse()
 
 	ctx := context.Background()
+	var cutoff time.Time
+	if windowDays > 0 {
+		cutoff = time.Now().Add(-time.Duration(windowDays) * 24 * time.Hour)
+	}
 
 	// getFeed is bound to the selected router implementation for current mode.
 	var getFeed func(ctx context.Context, userIDs []int64, limit int) error
@@ -123,14 +131,18 @@ func main() {
 			defer wg.Done()
 			for range jobs {
 				// Pick 10 random subscriptions
-				userIDs := make([]int64, 0, 10)
-				for len(userIDs) < 10 {
+				userIDs := make([]int64, 0, subs)
+				for len(userIDs) < subs {
 					id := 1 + rand.Int63n(int64(users))
 					userIDs = append(userIDs, id)
 				}
 				// Time a single logical request (one feed fetch).
 				start := time.Now()
-				err := getFeed(ctx, userIDs, limit)
+				callCtx := ctx
+				if windowDays > 0 {
+					callCtx = context.WithValue(ctx, router.CtxCutoffKey, cutoff)
+				}
+				err := getFeed(callCtx, userIDs, limit)
 				dur := time.Since(start)
 				results <- result{latency: dur, err: err}
 			}
