@@ -1,0 +1,125 @@
+version: "3.9"
+
+services:
+  postgres_baseline:
+    image: postgres:16
+    container_name: postgres_baseline
+    environment:
+      POSTGRES_PASSWORD: postgres
+    cpus: "1.0"
+    mem_limit: "1g"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_parallel_workers=1
+      - -c
+      - max_parallel_workers_per_gather=0
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  postgres_shard_1:
+    image: postgres:16
+    container_name: postgres_shard_1
+    environment:
+      POSTGRES_PASSWORD: postgres
+    cpus: "1.0"
+    mem_limit: "1g"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_parallel_workers=1
+      - -c
+      - max_parallel_workers_per_gather=0
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  postgres_shard_2:
+    image: postgres:16
+    container_name: postgres_shard_2
+    environment:
+      POSTGRES_PASSWORD: postgres
+    cpus: "1.0"
+    mem_limit: "1g"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_parallel_workers=1
+      - -c
+      - max_parallel_workers_per_gather=0
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  postgres_shard_3:
+    image: postgres:16
+    container_name: postgres_shard_3
+    environment:
+      POSTGRES_PASSWORD: postgres
+    cpus: "1.0"
+    mem_limit: "1g"
+    command:
+      - postgres
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - max_parallel_workers=1
+      - -c
+      - max_parallel_workers_per_gather=0
+    ports:
+      - "5435:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: app
+    working_dir: /app
+    command: ["sleep", "infinity"]
+    cpus: "2.0"
+    mem_limit: "2g"
+    volumes:
+      - ./:/app
+    depends_on:
+      postgres_baseline:
+        condition: service_healthy
+      postgres_shard_1:
+        condition: service_healthy
+      postgres_shard_2:
+        condition: service_healthy
+      postgres_shard_3:
+        condition: service_healthy
+
+
