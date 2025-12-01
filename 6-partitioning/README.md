@@ -199,6 +199,102 @@ Notes:
 
 ---
 
+## Partition management: missing partitions and auto-creation
+
+Not all systems manage partitions automatically. With range partitioning by month, inserting a row into a non-existent month will fail by default.
+
+Reproduce the error (insert into an unseen future month):
+
+```bash
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "INSERT INTO posts_range (user_id, created_at, content) VALUES (1, '2026-02-01', 'out of range');"
+# Expected: ERROR: no partition of relation "posts_range" found for row
+```
+
+Two approaches to fix this:
+
+1) Trigger-based auto-creation
+- Install trigger (it will auto-create missing month partitions on INSERT):
+  ```bash
+  docker exec -i postgres_baseline psql -U postgres -d postgres < sql/range_partition_trigger.sql
+  ```
+- Test again (now plain INSERT succeeds):
+  ```bash
+  docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+    "INSERT INTO posts_range (user_id, created_at, content) VALUES (1, '2026-02-01', 'ok with trigger');"
+  ```
+- Verify partition:
+  ```bash
+  docker exec -it postgres_baseline psql -U postgres -d postgres -c "\dt posts_range_2026_02"
+  ```
+- Pros:
+  - No external dependencies; fully controlled in SQL
+  - Works transparently for any INSERT to the parent
+- Cons:
+  - DDL on the hot write path (partition creation under concurrent load needs care)
+  - Does not handle retention/archival or proactive creation
+
+Now remove the trigger and show the error again (using another future month):
+```bash
+docker exec -it postgres_baseline psql -U postgres -d postgres -c "DROP TRIGGER IF EXISTS trig_posts_range_default_redirect ON posts_range_default;"
+docker exec -it postgres_baseline psql -U postgres -d postgres -c "DROP FUNCTION IF EXISTS posts_range_default_redirect();"
+docker exec -it postgres_baseline psql -U postgres -d postgres -c "DROP TABLE IF EXISTS posts_range_default;"
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "INSERT INTO posts_range (user_id, created_at, content) VALUES (2, '2026-03-01', 'should fail');"
+# Expected: ERROR
+```
+
+2) Extension: pg_partman (scheduled partition management)
+- Capabilities: pre-create future partitions, retention/archival, scheduled maintenance
+- Setup in this project (Debian-based postgres image):
+  ```bash
+  docker exec -it postgres_baseline bash -lc "apt-get update && apt-get install -y postgresql-16-partman"
+  docker exec -it postgres_baseline psql -U postgres -d postgres -c "CREATE EXTENSION IF NOT EXISTS pg_partman;"
+  # Set up an isolated demo parent (posts_partman) and pre-create future monthly partitions
+  docker exec -i postgres_baseline psql -U postgres -d postgres < sql/pg_partman_setup.sql
+  ```
+- Pros:
+  - Production-grade: proactive partition creation, retention management, fewer surprises
+  - No DDL on the hot write path
+- Cons:
+  - Extra dependency and setup
+  - Operational overhead and learning curve
+
+After applying one of the approaches, re-run an insert:
+
+```bash
+# With pg_partman (plain INSERT works if the partition was pre-created).
+# Note: we use the isolated demo table posts_partman here.
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "INSERT INTO posts_partman (user_id, created_at, content) VALUES (3, '2026-03-01', 'ok with partman');"
+
+# Verify partition exists:
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+"SELECT * FROM partman.show_partitions('public.posts_partman');"
+
+# Writing to non-excistig partition. By defaul writes to default table
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "INSERT INTO posts_partman (user_id, created_at, content) VALUES (3, '2027-03-01', 'ok with partman');"
+
+# Show created record
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "SELECT * FROM public.posts_partman_default WHERE  created_at >= '2027-03-01'::timestamp AND  created_at <  '2027-04-01'::timestamp;"
+
+# Partition data
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "SELECT partman.partition_data_time('public.posts_partman');"  
+
+# Show that table is empty
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "SELECT * FROM public.posts_partman_default WHERE  created_at >= '2027-03-01'::timestamp AND  created_at <  '2027-04-01'::timestamp;"
+
+# Verify new partition exists:
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+"SELECT * FROM partman.show_partitions('public.posts_partman');"
+```
+
+---
+
 ## Clean-up
 
 ```bash

@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS posts_range (
   id BIGINT,
   user_id BIGINT,
-  created_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL,
   content TEXT
 ) PARTITION BY RANGE (created_at);
 
