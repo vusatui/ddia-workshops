@@ -249,7 +249,6 @@ docker exec -it postgres_baseline psql -U postgres -d postgres -c \
 - Setup in this project (Debian-based postgres image):
   ```bash
   docker exec -it postgres_baseline bash -lc "apt-get update && apt-get install -y postgresql-16-partman"
-  docker exec -it postgres_baseline psql -U postgres -d postgres -c "CREATE EXTENSION IF NOT EXISTS pg_partman;"
   # Set up an isolated demo parent (posts_partman) and pre-create future monthly partitions
   docker exec -i postgres_baseline psql -U postgres -d postgres < sql/pg_partman_setup.sql
   ```
@@ -295,6 +294,54 @@ docker exec -it postgres_baseline psql -U postgres -d postgres -c \
 
 ---
 
+## Join across partitions (execution plan demo)
+
+In this step we show how the planner prunes partitions on both sides of a join when predicates are aligned with the partition key. We use the isolated pg_partman demo tables to avoid affecting other workshop steps.
+
+1) Ensure pg_partman demo tables exist
+```bash
+# posts_partman (created earlier)
+docker exec -i postgres_baseline psql -U postgres -d postgres < sql/pg_partman_setup.sql
+
+# comments_partman (new)
+docker exec -i postgres_baseline psql -U postgres -d postgres < sql/pg_partman_setup_comments.sql
+```
+
+2) Seed a few rows to have matching months
+```bash
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "INSERT INTO posts_partman (id, user_id, created_at, content) VALUES
+   (100001, 1, '2026-03-05', 'p-mar'),
+   (100002, 2, '2026-03-10', 'p-mar'),
+   (100003, 2, '2026-04-02', 'p-apr');"
+
+docker exec -it postgres_baseline psql -U postgres -d postgres -c \
+  "INSERT INTO comments_partman (id, post_id, user_id, created_at, content) VALUES
+   (200001, 100001, 11, '2026-03-06', 'c-mar'),
+   (200002, 100001, 12, '2026-03-12', 'c-mar'),
+   (200003, 100003, 12, '2026-04-05', 'c-apr');"
+```
+
+3) Run EXPLAIN (ANALYZE, BUFFERS) for a join with a monthly window
+```bash
+docker exec -it postgres_baseline psql -U postgres -d postgres -c "
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT p.id, c.id, p.created_at AS p_ts, c.created_at AS c_ts
+FROM   posts_partman p
+JOIN   comments_partman c ON c.post_id = p.id
+WHERE  p.created_at >= '2026-03-01' AND p.created_at < '2026-04-01'
+  AND  c.created_at >= '2026-03-01' AND c.created_at < '2026-04-01'
+ORDER  BY p.created_at DESC
+LIMIT  10;"
+```
+
+What to look for:
+- Partition Pruning on both parents (only the 2026‑03 children are scanned).
+- Append/Bitmap/Index scans localized to the pruned children.
+- A small row count and low buffer usage vs. scanning many children.
+
+---
+
 ## Clean-up
 
 ```bash
@@ -307,6 +354,7 @@ docker-compose down -v
 # optional: remove dangling images and build cache
 docker system prune -f
 ```
+
 
 
 
