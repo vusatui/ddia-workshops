@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,6 +18,19 @@ func NewBaselinePool(ctx context.Context) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse baseline dsn: %w", err)
 	}
 	cfg.MaxConns = 50
+	// Reduce planning overhead by caching prepared statements per connection.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	cfg.ConnConfig.StatementCacheCapacity = 256
+	// Enable partition-wise optimizations (harmless for baseline, useful globally).
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if _, err := conn.Exec(ctx, "SET enable_partitionwise_join = on"); err != nil {
+			return err
+		}
+		if _, err := conn.Exec(ctx, "SET enable_partitionwise_aggregate = on"); err != nil {
+			return err
+		}
+		return nil
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect baseline: %w", err)

@@ -22,16 +22,18 @@ func (r *BaselineRouter) GetFeed(ctx context.Context, userIDs []int64, limit int
 	if r.DB == nil {
 		return nil, fmt.Errorf("db is nil")
 	}
-	// Always apply a 7-day time window to highlight partitioning impact consistently.
-	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	// Apply a month-aligned window to compare fairly with range pruning.
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	monthEnd := monthStart.AddDate(0, 1, 0)
 	const q = `
 	SELECT id, user_id, created_at, content
 	FROM posts
-	WHERE user_id = ANY($1) AND created_at >= $2
+	WHERE user_id = ANY($1) AND created_at >= $2 AND created_at < $3
 	ORDER BY created_at DESC
-	LIMIT $3;
+	LIMIT $4;
 	`
-	rows, err := r.DB.Query(ctx, q, userIDs, cutoff, limit)
+	rows, err := r.DB.Query(ctx, q, userIDs, monthStart, monthEnd, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query baseline: %w", err)
 	}

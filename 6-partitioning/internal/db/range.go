@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -17,6 +18,17 @@ func NewRangePool(ctx context.Context) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("parse range dsn: %w", err)
 	}
 	cfg.MaxConns = 50
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
+	cfg.ConnConfig.StatementCacheCapacity = 256
+	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		if _, err := conn.Exec(ctx, "SET enable_partitionwise_join = on"); err != nil {
+			return err
+		}
+		if _, err := conn.Exec(ctx, "SET enable_partitionwise_aggregate = on"); err != nil {
+			return err
+		}
+		return nil
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect range: %w", err)

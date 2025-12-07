@@ -16,23 +16,24 @@ type RangeRouter struct {
 	DB *pgxpool.Pool
 }
 
-// GetFeed hits the partitioned table (posts_range). The query shape matches baseline,
-// but the storage engine routes the scan to relevant monthly partitions.
+// GetFeed hits the partitioned table (posts_range). We align the predicate to the current month
+// so the planner can prune to exactly one monthly partition.
 func (r *RangeRouter) GetFeed(ctx context.Context, userIDs []int64, limit int) ([]model.Post, error) {
 	if r.DB == nil {
 		return nil, fmt.Errorf("db is nil")
 	}
-	// Using partitioned table (in ready we name it posts_range to avoid clashing with baseline)
-	// Always apply a 7-day window for clear partition pruning.
-	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	// Use a month-aligned window for clear pruning on monthly partitions.
+	now := time.Now()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	monthEnd := monthStart.AddDate(0, 1, 0)
 	const q = `
 	SELECT id, user_id, created_at, content
 	FROM posts_range
-	WHERE user_id = ANY($1) AND created_at >= $2
+	WHERE user_id = ANY($1) AND created_at >= $2 AND created_at < $3
 	ORDER BY created_at DESC
-	LIMIT $3;
+	LIMIT $4;
 	`
-	rows, err := r.DB.Query(ctx, q, userIDs, cutoff, limit)
+	rows, err := r.DB.Query(ctx, q, userIDs, monthStart, monthEnd, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query range: %w", err)
 	}
